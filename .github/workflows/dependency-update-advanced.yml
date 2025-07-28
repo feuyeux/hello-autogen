@@ -1,0 +1,147 @@
+name: Advanced Dependency Update
+
+on:
+  schedule:
+    # 每周一早上8点运行
+    - cron: '0 8 * * 1'
+  workflow_dispatch:
+    inputs:
+      update_type:
+        description: 'Update type'
+        required: true
+        default: 'minor'
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+
+jobs:
+  update-dependencies:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        project: [python, java]
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - name: Set up Python (for Python project)
+        if: matrix.project == 'python'
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Set up JDK 21 (for Java project)
+        if: matrix.project == 'java'
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+
+      - name: Update Python dependencies
+        if: matrix.project == 'python'
+        run: |
+          cd hello-autogen-python
+          
+          # 安装必要工具
+          pip install pip-tools pip-audit safety
+          
+          # 备份当前版本
+          cp requirements.txt requirements.txt.backup
+          
+          # 更新依赖
+          pip-compile --upgrade requirements.txt
+          
+          # 安全检查
+          pip-audit --requirement requirements.txt --format=json --output=security-report.json || true
+          
+          # 生成更新报告
+          echo "## Python Dependencies Update Report" > update-report.md
+          echo "" >> update-report.md
+          
+          if ! cmp -s requirements.txt requirements.txt.backup; then
+            echo "### Updated Dependencies:" >> update-report.md
+            echo "\`\`\`diff" >> update-report.md
+            diff requirements.txt.backup requirements.txt >> update-report.md || true
+            echo "\`\`\`" >> update-report.md
+          else
+            echo "No dependencies were updated." >> update-report.md
+          fi
+
+      - name: Update Java dependencies
+        if: matrix.project == 'java'
+        run: |
+          cd hello-autogen-java
+          
+          # 备份当前版本
+          cp pom.xml pom.xml.backup
+          
+          # 更新依赖版本
+          mvn versions:use-latest-versions -DallowSnapshots=false
+          mvn versions:update-properties -DallowSnapshots=false
+          
+          # 生成更新报告
+          echo "## Java Dependencies Update Report" > update-report.md
+          echo "" >> update-report.md
+          
+          if ! cmp -s pom.xml pom.xml.backup; then
+            echo "### Updated Dependencies:" >> update-report.md
+            echo "\`\`\`diff" >> update-report.md
+            diff pom.xml.backup pom.xml >> update-report.md || true
+            echo "\`\`\`" >> update-report.md
+            
+            # 显示版本变化
+            mvn versions:display-dependency-updates >> update-report.md || true
+          else
+            echo "No dependencies were updated." >> update-report.md
+          fi
+
+      - name: Run tests
+        run: |
+          if [ "${{ matrix.project }}" == "python" ]; then
+            cd hello-autogen-python
+            pip install -r requirements.txt
+            python -m pytest . || echo "Tests failed, but continuing..."
+          elif [ "${{ matrix.project }}" == "java" ]; then
+            cd hello-autogen-java
+            mvn test || echo "Tests failed, but continuing..."
+          fi
+
+      - name: Check for changes
+        id: changes
+        run: |
+          if [ "${{ matrix.project }}" == "python" ]; then
+            cd hello-autogen-python
+            if git diff --quiet requirements.txt; then
+              echo "changes=false" >> $GITHUB_OUTPUT
+            else
+              echo "changes=true" >> $GITHUB_OUTPUT
+            fi
+          elif [ "${{ matrix.project }}" == "java" ]; then
+            cd hello-autogen-java
+            if git diff --quiet pom.xml; then
+              echo "changes=false" >> $GITHUB_OUTPUT
+            else
+              echo "changes=true" >> $GITHUB_OUTPUT
+            fi
+          fi
+
+      - name: Create Pull Request
+        if: steps.changes.outputs.changes == 'true'
+        uses: peter-evans/create-pull-request@v5
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          commit-message: "chore: update ${{ matrix.project }} dependencies (${{ github.event.inputs.update_type || 'scheduled' }})"
+          title: "🔄 Auto-update ${{ matrix.project }} dependencies"
+          body-path: ${{ matrix.project == 'python' && 'hello-autogen-python/update-report.md' || 'hello-autogen-java/update-report.md' }}
+          branch: auto-update/${{ matrix.project }}-deps-${{ github.run_number }}
+          delete-branch: true
+          labels: |
+            dependencies
+            ${{ matrix.project }}
+            automated

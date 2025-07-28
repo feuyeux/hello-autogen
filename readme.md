@@ -1,6 +1,9 @@
 # Hello Autogen
 
-<https://microsoft.github.io/autogen/docs/tutorial/introduction>
+- https://github.com/microsoft/autogen/tags
+- https://github.com/ag2ai/ag2/tags
+
+<https://microsoft.github.io/autogen/stable>
 
 > The whole is greater than the sum of its parts.
 >
