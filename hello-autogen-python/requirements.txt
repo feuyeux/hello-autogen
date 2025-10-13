@@ -1,1 +1,1 @@
-pyautogen==0.4
+pyautogen==0.10.0
